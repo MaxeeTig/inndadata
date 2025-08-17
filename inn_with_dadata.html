@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Валидатор ИНН с проверкой через Dadata</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        #company-info {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #e7f4ff;
+            display: none;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .valid { background-color: #dff0d8; color: #3c763d; }
+        .invalid { background-color: #f2dede; color: #a94442; }
+        .loading { color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Проверка ИНН с запросом в Dadata</h1>
+        
+        <div class="form-group">
+            <label for="inn">Введите ИНН:</label>
+            <input type="text" id="inn" placeholder="Введите 10 или 12 цифр">
+        </div>
+        
+        <div class="radio-group">
+            <label>Тип налогоплательщика:</label>
+            <label class="radio-option">
+                <input type="radio" name="innType" value="legal" checked> Юридическое лицо (10 цифр)
+            </label>
+            <label class="radio-option">
+                <input type="radio" name="innType" value="private"> Физическое лицо/ИП (12 цифр)
+            </label>
+        </div>
+        
+        <button onclick="validateAndFetchINN()">Проверить и найти данные</button>
+        
+        <div id="result"></div>
+        <div id="company-info"></div>
+    </div>
+
+    <script>
+        // Replace with your actual Dadata API key
+        const DADATA_API_KEY = 'YOUR_DADATA_API_KEY';
+        
+        async function validateAndFetchINN() {
+            const innInput = document.getElementById('inn').value.trim();
+            const innType = document.querySelector('input[name="innType"]:checked').value;
+            const resultDiv = document.getElementById('result');
+            const companyInfo = document.getElementById('company-info');
+            
+            // Clear previous results
+            resultDiv.style.display = 'none';
+            companyInfo.style.display = 'none';
+            companyInfo.innerHTML = '';
+            
+            // Basic validation
+            if (!innInput) {
+                showResult('Пожалуйста, введите ИНН', false);
+                return;
+            }
+            
+            if (!/^\d+$/.test(innInput)) {
+                showResult('ИНН должен содержать только цифры', false);
+                return;
+            }
+            
+            if (innType === 'legal' && innInput.length !== 10) {
+                showResult('ИНН юридического лица должен содержать 10 цифр', false);
+                return;
+            }
+            
+            if (innType === 'private' && innInput.length !== 12) {
+                showResult('ИНН физического лица/ИП должен содержать 12 цифр', false);
+                return;
+            }
+            
+            // Validate INN structure
+            const isValid = innType === 'legal' 
+                ? validateLegalEntityINN(innInput) 
+                : validatePrivatePersonINN(innInput);
+            
+            if (!isValid) {
+                showResult('ИНН некорректный', false);
+                return;
+            }
+            
+            showResult('ИНН корректный. Запрашиваю данные...', true);
+            
+            try {
+                // Fetch company data from Dadata
+                const companyData = await fetchCompanyData(innInput);
+                
+                if (companyData) {
+                    displayCompanyInfo(companyData);
+                    showResult('Данные успешно получены', true);
+                } else {
+                    showResult('Компания не найдена в Dadata', false);
+                }
+            } catch (error) {
+                console.error('Ошибка запроса к Dadata:', error);
+                showResult('Ошибка при запросе данных', false);
+            }
+        }
+        
+        async function fetchCompanyData(inn) {
+            const url = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party';
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                mode: 'cors', // Important for cross-origin requests
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': `Token ${DADATA_API_KEY}`
+                },
+                body: JSON.stringify({ query: inn })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.suggestions && data.suggestions.length > 0) {
+                return data.suggestions[0].data;
+            }
+            return null;
+        }
+        
+        function displayCompanyInfo(company) {
+            const infoDiv = document.getElementById('company-info');
+            
+            let html = `
+                <h3>${company.name.full_with_opf || 'Название не указано'}</h3>
+                <p><strong>Юридический адрес:</strong> ${company.address.unrestricted_value || 'Не указан'}</p>
+                <p><strong>ОГРН:</strong> ${company.ogrn || 'Не указан'}</p>
+                <p><strong>КПП:</strong> ${company.kpp || 'Не указан'}</p>
+                <p><strong>Руководитель:</strong> ${company.management?.name || 'Не указан'}</p>
+                <p><strong>Статус:</strong> ${company.state?.status || 'Не указан'}</p>
+            `;
+            
+            infoDiv.innerHTML = html;
+            infoDiv.style.display = 'block';
+        }
+        
+        // Your existing validation functions
+        function validateLegalEntityINN(inn) {
+            if (inn.length !== 10) return false;
+            const weights = [2, 4, 10, 3, 5, 9, 4, 6, 8, 0];
+            let sum = 0;
+            for (let i = 0; i < 10; i++) {
+                sum += parseInt(inn[i]) * weights[i];
+            }
+            let controlNumber = sum % 11;
+            if (controlNumber > 9) {
+                controlNumber = controlNumber % 10;
+            }
+            return controlNumber === parseInt(inn[9]);
+        }
+        
+        function validatePrivatePersonINN(inn) {
+            if (inn.length !== 12) return false;
+            const weights1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8, 0];
+            let sum1 = 0;
+            for (let i = 0; i < 11; i++) {
+                sum1 += parseInt(inn[i]) * weights1[i];
+            }
+            let controlNumber1 = sum1 % 11;
+            if (controlNumber1 > 9) {
+                controlNumber1 = controlNumber1 % 10;
+            }
+            if (controlNumber1 !== parseInt(inn[10])) {
+                return false;
+            }
+            const weights2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8, 0];
+            let sum2 = 0;
+            for (let i = 0; i < 12; i++) {
+                sum2 += parseInt(inn[i]) * weights2[i];
+            }
+            let controlNumber2 = sum2 % 11;
+            if (controlNumber2 > 9) {
+                controlNumber2 = controlNumber2 % 10;
+            }
+            return controlNumber2 === parseInt(inn[11]);
+        }
+        
+        function showResult(message, isValid) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = isValid ? 'valid' : 'invalid';
+            resultDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
